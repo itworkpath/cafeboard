@@ -1,0 +1,110 @@
+# Docker Compose для CafeBoard — локальная разработка
+# Сервисы: backend (FastAPI), frontend (React + Vite), db (SQLite/PostgreSQL)
+
+version: "3.9"
+
+services:
+  # ──────────────────────────────────────────────
+  # Backend — FastAPI (Python)
+  # ──────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cafeboard-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      # Hot-reload: монтируем исходный код
+      - ./backend/src:/app/src:ro
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-sqlite:///./data/cafeboard.db}
+      - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5173}
+    networks:
+      - cafeboard-network
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  # ──────────────────────────────────────────────
+  # Frontend — React (Vite) в dev-режиме
+  # ──────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: development
+    container_name: cafeboard-frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      # Hot-reload: монтируем исходный код
+      - ./frontend/src:/app/src:ro
+      - ./frontend/public:/app/public:ro
+    env_file:
+      - .env
+    environment:
+      - VITE_API_URL=${VITE_API_URL:-http://localhost:8000}
+    networks:
+      - cafeboard-network
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:5173"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  # ──────────────────────────────────────────────
+  # Database — SQLite (dev) или PostgreSQL (prod)
+  # ──────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: cafeboard-db
+    ports:
+      - "5432:5432"
+    volumes:
+      - cafeboard-db-data:/var/lib/postgresql/data
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-cafeboard}
+      - POSTGRES_USER=${POSTGRES_USER:-cafeboard}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-cafeboard-secret}
+    networks:
+      - cafeboard-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cafeboard} -d ${POSTGRES_DB:-cafeboard}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+# ──────────────────────────────────────────────
+# Сети
+# ──────────────────────────────────────────────
+networks:
+  cafeboard-network:
+    driver: bridge
+    name: cafeboard-network
+
+# ──────────────────────────────────────────────
+# Тома
+# ──────────────────────────────────────────────
+volumes:
+  cafeboard-db-data:
+    name: cafeboard-db-data
